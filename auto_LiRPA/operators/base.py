@@ -25,7 +25,6 @@ import numpy as np
 from ..perturbations import *
 from ..utils import *
 from ..patches import *
-from ..linear_bound import LinearBound
 
 torch._C._jit_set_profiling_executor(False)
 torch._C._jit_set_profiling_mode(False)

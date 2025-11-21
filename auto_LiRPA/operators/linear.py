@@ -339,7 +339,7 @@ class BoundLinear(BoundOptimizableActivation):
                     prod_broadcast = prod(shape_broadcast)
                     ndim_broadcast = len(shape_broadcast)
                     if weight.ndim - 2 > ndim_broadcast:
-                        raise AssertionError(f"BoundLinear doesn't support weight with batchsize. Consider removing this dimension if possible.")
+                        raise AssertionError("BoundLinear doesn't support weight with batchsize. Consider removing this dimension if possible.")
 
                     # A_identity: (s_k, ...s_1, m, 1, s_k, ..., s_1, m, 1) where two 1s are for the two "matmul dimensions"
                     A_identity = torch.eye(

@@ -17,7 +17,6 @@
 """Handle Jacobian bounds."""
 
 import torch
-from auto_LiRPA.bound_ops import JacobianOP, GradNorm  # pylint: disable=unused-import
 from auto_LiRPA.bound_ops import (
     BoundInput, BoundAdd, BoundRelu, BoundJacobianInit,
     BoundJacobianOP)
@@ -96,7 +95,7 @@ def expand_jacobian_node(self, jacobian_node):
                     continue
                 grad[node.inputs[i].name] = node_grad_ori[
                     node.name][i][0](*node_grad_ori[node.name][i][1])
-                if not node.inputs[i].name in degree:
+                if node.inputs[i].name not in degree:
                     degree[node.inputs[i].name] = 0
                     queue.append(node.inputs[i])
                 degree[node.inputs[i].name] += 1
@@ -137,7 +136,7 @@ def expand_jacobian_node(self, jacobian_node):
                 rename_dict[nodes_in[i].name] = new_name
             for i in range(len(nodes_op)):
                 # intermediate nodes
-                if not nodes_op[i].name in rename_dict:
+                if nodes_op[i].name not in rename_dict:
                     new_name = f'/jacobian{output_node.name}{node.name}/{k}/tmp{nodes_op[i].name}'
                     rename_dict[nodes_op[i].name] = new_name
             assert len(nodes_out) == 1

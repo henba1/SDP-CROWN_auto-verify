@@ -513,7 +513,7 @@ class PerturbationSynonym(Perturbation):
 
     def _build_substitution(self, batch):
         for example in batch:
-            if not 'candidates' in example or example['candidates'] is None:
+            if 'candidates' not in example or example['candidates'] is None:
                 candidates = []
                 tokens = example['sentence'].strip().lower().split(' ')
                 for i in range(len(tokens)):

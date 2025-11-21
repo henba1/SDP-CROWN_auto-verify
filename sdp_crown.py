@@ -216,18 +216,24 @@ if __name__ == '__main__':
     parser.add_argument('--lr_lambda', default=0.05, type=float, help='lambda learning rate')
     parser.add_argument('--start', default=0, type=int, help='start index for the dataset')
     parser.add_argument('--end', default=200, type=int, help='end index for the dataset')
-    parser.add_argument('--model', default='mnist_mlp',
-    choices=[
-        'mnist_mlp',
-        'mnist_convsmall',
-        'mnist_convlarge',
-        'cifar10_cnn_a',
-        'cifar10_cnn_b',
-        'cifar10_cnn_c',
-        'cifar10_convsmall',
-        'cifar10_convdeep',
-        'cifar10_convlarge',
-        ])
+    
+    
+    #1
+    #parser.add_argument('--model', default='mnist_mlp',
+    # choices=[
+    #     'mnist_mlp',
+    #     'mnist_convsmall',
+    #     'mnist_convlarge',
+    #     'cifar10_cnn_a',
+    #     'cifar10_cnn_b',
+    #     'cifar10_cnn_c',
+    #     'cifar10_convsmall',
+    #     'cifar10_convdeep',
+    #     'cifar10_convlarge',
+    #     ])
+
+    #tweak how model is passed to SDPCrown: should be now a path to a model (ONNX or pth) 
+        
     args = parser.parse_args()
     device = torch.device('cuda') if torch.cuda.is_available() else torch.device('cpu')
     model, dataset, labels, radius_rescale, classes = load_model_and_dataset(args, device)

@@ -15,7 +15,7 @@
 ##                                                                     ##
 #########################################################################
 from .base import *
-from ..patches import Patches, patches_to_matrix
+from ..patches import Patches
 
 
 class BoundGather(Bound):
