@@ -1,0 +1,4 @@
+verification_fail_idx: [4]
+verification_fail: 4
+verified_accuracy: 60.0
+average_time: 37.74328398704529
