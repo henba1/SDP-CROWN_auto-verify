@@ -15,7 +15,6 @@
 ##                                                                     ##
 #########################################################################
 """Pooling operators."""
-from collections import OrderedDict
 from .base import *
 from .activation_base import BoundOptimizableActivation
 import numpy as np

@@ -18,7 +18,6 @@ from torch.nn import Module
 from .base import *
 from ..patches import Patches, patches_to_matrix
 from .linear import BoundLinear
-from .constant import BoundConstant
 
 
 class BoundReshape(Bound):

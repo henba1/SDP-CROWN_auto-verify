@@ -18,7 +18,6 @@
 
 Including input, parameter, buffer, etc."""
 
-from itertools import chain
 from .base import *
 
 

@@ -19,7 +19,6 @@ import torch
 
 from .base import *
 import numpy as np
-from .solver_utils import grb
 from ..patches import unify_shape, create_valid_mask, is_shape_used
 
 
@@ -74,7 +73,7 @@ class BoundResize(Bound):
             split_shape = tuple((torch.tensor(
                 last_A.shape)[-2:] / torch.tensor(self.scale_factor)).ceil().to(torch.long).tolist())
             new_shape = last_A.shape[:-2] + split_shape
-            if not type(last_A) is Patches:
+            if type(last_A) is not Patches:
                 # classical mode is simple to handle by
                 # sum the grid elements by using avg_pool2d with divisor_override=1
                 return torch.nn.functional.avg_pool2d(

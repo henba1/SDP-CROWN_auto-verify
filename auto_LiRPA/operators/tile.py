@@ -1,5 +1,4 @@
 """BoundTile"""
-from torch.nn import Module
 from .base import *
 
 class BoundTile(Bound):
