@@ -1,6 +1,9 @@
 import torch
+import torch.nn as nn
 import numpy as np
+import gc
 
+from pathlib import Path
 from models import *
 from fractions import Fraction
 
@@ -67,68 +70,153 @@ def preprocess_cifar(image, inception_preprocess=False, perturbation=False):
     else:
         return (image - rescaled_means) / rescaled_devs
     
-def load_model_and_dataset(args, device):
-    match args.model.lower():
-        case "mnist_mlp":
-            model = MNIST_MLP().to(device)
-            checkpoint = torch.load('./models/mnist_mlp.pth',map_location=device)
-            args.dataset = "mnist"
-        case "mnist_convsmall":
-            model = MNIST_ConvSmall().to(device)
-            checkpoint = torch.load('./models/mnist_convsmall.pth',map_location=device)
-            args.dataset = "mnist"
-        case "mnist_convlarge":
-            model = MNIST_ConvLarge().to(device)
-            checkpoint = torch.load('./models/mnist_convlarge.pth',map_location=device)
-            args.dataset = "mnist"
-        case "cifar10_cnn_a":
-            model = CIFAR10_CNN_A().to(device)
-            checkpoint = torch.load('./models/cifar10_cnn_a.pth',map_location=device)
-            args.dataset = "cifar10"
-        case "cifar10_cnn_b":
-            model = CIFAR10_CNN_B().to(device)
-            checkpoint = torch.load('./models/cifar10_cnn_b.pth',map_location=device)
-            args.dataset = "cifar10"
-        case "cifar10_cnn_c":
-            model = CIFAR10_CNN_C().to(device)
-            checkpoint = torch.load('./models/cifar10_cnn_c.pth',map_location=device)
-            args.dataset = "cifar10"
-        case "cifar10_convsmall":
-            model = CIFAR10_ConvSmall().to(device)
-            checkpoint = torch.load('./models/cifar10_convsmall.pth',map_location=device)
-            args.dataset = "cifar10"
-        case "cifar10_convdeep":
-            model = CIFAR10_ConvDeep().to(device)
-            checkpoint = torch.load('./models/cifar10_convdeep.pth',map_location=device)
-            args.dataset = "cifar10"
-        case "cifar10_convlarge":
-            model = CIFAR10_ConvLarge().to(device)
-            checkpoint = torch.load('./models/cifar10_convlarge.pth',map_location=device)
-            args.dataset = "cifar10"
-        case _:
-            raise ValueError(f"Unexpected model: {args.model}")
-    model.load_state_dict(checkpoint)
-    model.eval()
-    
-    # Load dataset
-    if "mnist" in args.model.lower():
-        dataset = np.load('./datasets/sdp/mnist/X_sdp.npy')
-        labels = np.load('./datasets/sdp/mnist/y_sdp.npy')
-        dataset = torch.from_numpy(dataset).permute(0,3,1,2)
-        labels = torch.from_numpy(labels)
-        range = args.radius
-        classes = 10
-    elif "cifar10" in args.model.lower():
-        dataset = np.load('./datasets/sdp/cifar/X_sdp.npy')
-        labels = np.load('./datasets/sdp/cifar/y_sdp.npy')
-        dataset = preprocess_cifar(dataset)
-        dataset = torch.from_numpy(dataset).permute(0,3,1,2)
-        labels = torch.from_numpy(labels)
-        range = args.radius/0.225
-        classes = 10
+def load_model_and_dataset(args, device, image: np.ndarray):
+    """
+    Load a PyTorch model from a checkpoint path and wrap a single image/label
+    instance into tensors usable by SDP-CROWN.
+
+    Args:
+        args: Argument namespace, with args.model (path to .pth or model id)
+              and args.radius already set.
+        device: Torch device.
+        image: Numpy array representing a single input instance (flattened or shaped).
+        label: Integer class label for the instance.
+
+    Returns:
+        model: nn.Module on the correct device, in eval mode.
+        dataset: Tensor of shape (1, ...) containing the image.
+        labels: Tensor of shape (1,) containing the label.
+        radius_rescale: Float radius used for the perturbation.
+        classes: Integer number of output classes inferred from the model.
+    """
+    model_arg = args.model
+    model_path = Path(model_arg)
+
+    if model_path.suffix == ".pth":
+        # Generic PyTorch checkpoint path. We assume it stores an nn.Module
+        # or a state_dict compatible with one of the architectures in models.py.
+        checkpoint = torch.load(model_path, map_location=device)
+        if isinstance(checkpoint, nn.Module):
+            model = checkpoint.to(device)
+        elif isinstance(checkpoint, dict):
+            # User must pass in a compatible architecture via model id.
+            # Fall back to simple MNIST/CIFAR-10 architectures based on name.
+            name = model_path.stem.lower()
+            if "mnist" in name and "mlp" in name:
+                model = MNIST_MLP().to(device)
+            elif "mnist" in name and "convsmall" in name:
+                model = MNIST_ConvSmall().to(device)
+            elif "mnist" in name:
+                model = MNIST_ConvLarge().to(device)
+            elif "cifar" in name and "cnn_a" in name:
+                model = CIFAR10_CNN_A().to(device)
+            elif "cifar" in name and "cnn_b" in name:
+                model = CIFAR10_CNN_B().to(device)
+            elif "cifar" in name and "cnn_c" in name:
+                model = CIFAR10_CNN_C().to(device)
+            elif "cifar" in name and "convsmall" in name:
+                model = CIFAR10_ConvSmall().to(device)
+            elif "cifar" in name and "convdeep" in name:
+                model = CIFAR10_ConvDeep().to(device)
+            elif "cifar" in name:
+                model = CIFAR10_ConvLarge().to(device)
+            else:
+                raise ValueError(
+                    f"Could not infer architecture from checkpoint name '{model_path.name}'. "
+                    "Please use one of the known SDP-CROWN architectures or adapt the loader."
+                )
+            model.load_state_dict(checkpoint)
+        else:
+            raise ValueError(f"Unsupported checkpoint format at '{model_path}'.")
+    elif model_path.suffix == ".onnx":
+        # ONNX frontends are not yet supported in this SDP-CROWN wrapper.
+        raise NotImplementedError(
+            "Loading ONNX models directly into SDP-CROWN is not supported yet. "
+            "Please provide a compatible PyTorch .pth checkpoint."
+        )
     else:
-        raise ValueError(f"Unexpected model: {args.model}")
-    
-    dataset = dataset[args.start:args.end]
-    labels = labels[args.start:args.end]
-    return model, dataset, labels, range, classes
+        # Fallback to legacy string identifiers (mnist_mlp, cifar10_cnn_a, ...)
+        name = str(model_arg).lower()
+        if name == "mnist_mlp":
+            model = MNIST_MLP().to(device)
+        elif name == "mnist_convsmall":
+            model = MNIST_ConvSmall().to(device)
+        elif name == "mnist_convlarge":
+            model = MNIST_ConvLarge().to(device)
+        elif name == "cifar10_cnn_a":
+            model = CIFAR10_CNN_A().to(device)
+        elif name == "cifar10_cnn_b":
+            model = CIFAR10_CNN_B().to(device)
+        elif name == "cifar10_cnn_c":
+            model = CIFAR10_CNN_C().to(device)
+        elif name == "cifar10_convsmall":
+            model = CIFAR10_ConvSmall().to(device)
+        elif name == "cifar10_convdeep":
+            model = CIFAR10_ConvDeep().to(device)
+        elif name == "cifar10_convlarge":
+            model = CIFAR10_ConvLarge().to(device)
+        else:
+            raise ValueError(f"Unexpected model identifier: {args.model}")
+
+    model.eval()
+
+    # Wrap single image and label into tensors.
+    x = torch.from_numpy(image).float().to(device)
+    if x.dim() == 1:
+        x = x.unsqueeze(0)
+    dataset = x  # shape: (1, ...)
+
+
+    # Infer number of classes from a forward pass.
+    with torch.no_grad():
+        logits = model(dataset)
+    classes = int(logits.shape[-1])
+
+    radius_rescale = float(getattr(args, "radius", 0.0))
+    return model, dataset, radius_rescale, classes
+
+
+#GPU memory management utility functions
+def get_gpu_memory_info(device):
+    """
+    Get current GPU memory usage in GB and percentage.
+
+    Args:
+        device: CUDA device
+
+    Returns:
+        dict: Contains memory_allocated_gb, memory_reserved_gb, total_memory_gb, memory_percent
+    """
+    if torch.cuda.is_available():
+        torch.cuda.synchronize()
+        memory_allocated = (
+            torch.cuda.memory_allocated(device) / 1024**3
+        )  # Convert to GB
+        memory_reserved = torch.cuda.memory_reserved(device) / 1024**3  # Convert to GB
+        total_memory = (
+            torch.cuda.get_device_properties(device).total_memory / 1024**3
+        )  # Convert to GB
+        memory_percent = (memory_allocated / total_memory) * 100
+        return {
+            "memory_allocated_gb": memory_allocated,
+            "memory_reserved_gb": memory_reserved,
+            "total_memory_gb": total_memory,
+            "memory_percent": memory_percent,
+        }
+    return None
+
+
+def cleanup_gpu_memory(model):
+    """Clear GPU memory after each sample."""
+    if torch.cuda.is_available():
+        # Clear gradients from model
+        for param in model.parameters():
+            if param.grad is not None:
+                param.grad.detach_()
+                param.grad = None
+
+        gc.collect()
+
+        # Clear CUDA cache
+        torch.cuda.empty_cache()
+        torch.cuda.synchronize()
