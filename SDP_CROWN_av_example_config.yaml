@@ -1,0 +1,11 @@
+# SDP-CROWN Configuration Example
+# This file contains the hyperparameters and settings for SDP-CROWN verification
+lr_alpha: 0.5
+lr_lambda: 0.05
+log_path: "/projects/prjs1681/runs/results/SDP-crown_testing"
+#do not need these as data is loaded by verona 
+# random_seed: 42
+# start: 0 # should stay at 0
+# end: 299 # can use sample_count-1 
+
+
