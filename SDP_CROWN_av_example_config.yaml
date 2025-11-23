@@ -3,9 +3,15 @@
 lr_alpha: 0.5
 lr_lambda: 0.05
 log_path: "/projects/prjs1681/runs/results/SDP-crown_testing"
-#do not need these as data is loaded by verona 
-# random_seed: 42
-# start: 0 # should stay at 0
-# end: 299 # can use sample_count-1 
+#
+# Optional: global input box constraint for the perturbation region seen by SDP-CROWN.
+# This should only be enabled when the inputs that reach the verifier are known to live in a fixed box, e.g. [0.0, 1.0]
+# for unnormalized image datasets such as the JAIR MNIST/CIFAR-10 models. If preprocessing normalizes or otherwise
+# rescales the inputs (for example to [-1, 1] or using dataset mean/std), make sure the bounds below match the actual
+# range after preprocessing, or leave this unset to disable the box constraint.
+#
+# To enable, uncomment and set the two endpoints [lower_bound, upper_bound]. The default (when commented out) is to
+# disable the global box constraint and use only the L2-ball perturbation.
+input_box_constraint: [0.0, 1.0]
 
 
