@@ -38,11 +38,21 @@ def verified_sdp_crown(
     method = "CROWN-Optimized"
     C = build_C(label, classes)
 
-    #global box constraint for mnist 
+    # Global box constraint for image datasets whose inputs live in [0, 1] (e.g. MNIST, CIFAR-10 JAIR models).
+    # This enforces that the L2-ball perturbation never leaves the valid pixel range, i.e., we verify robustness
+    # over the intersection of the L2-ball and the [0, 1]^n input domain.
+    #TODO: this makes sense for our CIFAR-10 models only because input wasnt normalized
     x_L, x_U = None, None
-    if "mnist" in args.model.lower():
-        x_U = torch.ones_like(image)
-        x_L = torch.zeros_like(image)
+    box_lower = getattr(args, "input_box_lower", None)
+    box_upper = getattr(args, "input_box_upper", None)
+
+    if box_lower is not None and box_upper is not None:
+        if box_lower > box_upper:
+            raise ValueError(
+                f"Invalid input box constraint: lower bound {box_lower} is greater than upper bound {box_upper}."
+            )
+        x_L = torch.full_like(image, box_lower)
+        x_U = torch.full_like(image, box_upper)
 
     ptb = PerturbationLpNorm(norm=norm, eps=radius, x_U=x_U, x_L=x_L)
     image = BoundedTensor(image, ptb)
@@ -119,7 +129,7 @@ if __name__ == "__main__":
         "--model",
         type=str,
         required=True,
-        help="Path or identifier of the model to be verified",
+        help="Path or identifier of the network",
     )
     parser.add_argument(
         "--config",
@@ -146,6 +156,19 @@ if __name__ == "__main__":
     args.lr_alpha = float(sdp_cfg.get("lr_alpha", 0.5))
     args.lr_lambda = float(sdp_cfg.get("lr_lambda", 0.05))
     args.logpath = str(sdp_cfg.get("log_path"))
+
+    box_cfg = sdp_cfg.get("input_box_constraint", None)
+    if box_cfg is None:
+        args.input_box_lower = None
+        args.input_box_upper = None
+    else:
+        if not (isinstance(box_cfg, (list, tuple)) and len(box_cfg) == 2):
+            raise ValueError(
+                "SDP-CROWN config error: 'input_box_constraint' must be a list or tuple of length 2: "
+                "[lower_bound, upper_bound]."
+            )
+        args.input_box_lower = float(box_cfg[0])
+        args.input_box_upper = float(box_cfg[1])
 
     # Load epsilon and metadata from sidecar metadata of VNNLibProperty saved by Verona, if available
     property_path = Path(args.vnnlib_property)
@@ -181,6 +204,7 @@ if __name__ == "__main__":
     model, image_tensor, radius_rescale, classes = load_model_and_dataset(
         args, device, image=image_np
     )
+    
 
     label_tensor = torch.tensor(label_int, dtype=torch.long, device=device)
 
