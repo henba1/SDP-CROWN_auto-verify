@@ -9,6 +9,8 @@ from models import *
 from fractions import Fraction
 from ada_verona import ONNXNetwork
 
+sdp_crown_model = False
+
 def parse_float_or_fraction(x: str) -> float:
     try:
         return float(x)
@@ -218,10 +220,27 @@ def load_model_and_dataset(args, device, image: np.ndarray):
         log_onnx_metadata(onnx_net, log_path)
         print(f"ONNX metadata logged to: {log_path}")
 
-    torch_model_wrapper = onnx_net.load_pytorch_model() 
-    model = torch_model_wrapper.to(device)
+    if sdp_crown_model:
+        model = CIFAR10_ConvLarge().to(device)
+        checkpoint = torch.load("./models/cifar10_convlarge.pth", map_location=device)
+        args.dataset = "cifar10"
+        model.load_state_dict(checkpoint)
+    else:
+        # NOTE:
+        # -----
+        # ONNXNetwork.load_pytorch_model() returns a TorchModelWrapper, whose forward()
+        # method *reshapes* the input tensor to the ONNX input shape on every call.
+        # This is fine for standard inference, but when SDP-CROWN wraps the input as
+        # a BoundedTensor and traces the model via auto_LiRPA.BoundedModule, that
+        # extra reshape layer interacts poorly with the LiRPA symbolic graph and
+        # can produce extremely large, overly conservative (very negative) margins.
+        #
+        # For SDP-CROWN we therefore bypass the wrapper and give BoundedModule the
+        # underlying plain nn.Module that onnx2torch produced.
+        torch_model_wrapper = onnx_net.load_pytorch_model()
+        model = torch_model_wrapper.torch_model.to(device)
     model.eval()
-    
+
     # Process single image: ensure it's in HWC format, add batch dimension, convert to tensor, permute to CHW
     image_arr = image.copy()
     
@@ -235,13 +254,15 @@ def load_model_and_dataset(args, device, image: np.ndarray):
     # Add batch dimension: (H, W, C) -> (1, H, W, C)
     if image_arr.ndim == 3:
         image_arr = image_arr[np.newaxis, ...]
+    
+    if sdp_crown_model:
+        image_arr = preprocess_cifar(image_arr)
+        radius_rescale = args.radius / 0.225       
+    else:
+        radius_rescale = args.radius
 
-    #image_arr = preprocess_cifar(image_arr)
     # Convert to tensor and permute to (1, C, H, W)
     image_tensor = torch.from_numpy(image_arr).permute(0, 3, 1, 2)
-    
-    #radius_rescale = args.radius / 0.225
-    radius_rescale = args.radius
     classes = 10 #hardcoded for now
 
     return model, image_tensor, radius_rescale, classes
