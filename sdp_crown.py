@@ -240,7 +240,6 @@ if __name__ == "__main__":
                 f.write(f"args.lr_lambda: {args.lr_lambda}\n")
                 f.write(f"args.logpath: {args.logpath}\n")
 
-
             try:
 
                 img_arr = image_np

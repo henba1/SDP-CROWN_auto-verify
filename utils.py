@@ -2,6 +2,7 @@ import torch
 import torch.nn as nn
 import numpy as np
 import gc
+import onnx
 
 from pathlib import Path
 from models import *
@@ -71,6 +72,113 @@ def preprocess_cifar(image, inception_preprocess=False, perturbation=False):
     else:
         return (image - rescaled_means) / rescaled_devs
 
+def log_onnx_metadata(onnx_net: ONNXNetwork, log_path: Path) -> None:
+    """
+    Extract and log key metadata from an ONNX model to a file.
+
+    Args:
+        onnx_net: The ONNXNetwork instance to extract metadata from.
+        log_path: Path to the log file where metadata will be written.
+    """
+    onnx_model = onnx_net.load_onnx_model()
+    input_shape = onnx_net.get_input_shape()
+
+    # Extract input information
+    input_info = []
+    for inp in onnx_model.graph.input:
+        shape = [d.dim_value if d.dim_value > 0 else d.dim_param for d in inp.type.tensor_type.shape.dim]
+        # Use the recommended helper function instead of deprecated mapping
+        try:
+            np_dtype = onnx.helper.tensor_dtype_to_np_dtype(inp.type.tensor_type.elem_type)
+            dtype = str(np_dtype)  # Convert numpy dtype to string
+        except (KeyError, AttributeError, TypeError) as e:
+            dtype = f"Unknown (error: {e})"
+        input_info.append({
+            "name": inp.name,
+            "shape": shape,
+            "dtype": dtype,
+        })
+
+    # Extract output information
+    output_info = []
+    for out in onnx_model.graph.output:
+        shape = [d.dim_value if d.dim_value > 0 else d.dim_param for d in out.type.tensor_type.shape.dim]
+        # Use the recommended helper function instead of deprecated mapping
+        try:
+            np_dtype = onnx.helper.tensor_dtype_to_np_dtype(out.type.tensor_type.elem_type)
+            dtype = str(np_dtype)  # Convert numpy dtype to string
+        except (KeyError, AttributeError, TypeError) as e:
+            dtype = f"Unknown (error: {e})"
+        output_info.append({
+            "name": out.name,
+            "shape": shape,
+            "dtype": dtype,
+        })
+
+    # Extract model metadata
+    model_producer = onnx_model.producer_name if onnx_model.producer_name else "Unknown"
+    model_version = onnx_model.producer_version if onnx_model.producer_version else "Unknown"
+    opset_version = onnx_model.opset_import[0].version if onnx_model.opset_import else "Unknown"
+    ir_version = onnx_model.ir_version
+
+    # Count nodes and initializers (weights)
+    num_nodes = len(onnx_model.graph.node)
+    num_initializers = len(onnx_model.graph.initializer)
+
+    # Get wrapper input shape (what TorchModelWrapper will reshape to)
+    wrapper_input_shape = onnx_net.get_input_shape()
+
+    # Write to log file
+    log_path.parent.mkdir(parents=True, exist_ok=True)
+    with open(log_path, "w", encoding="utf-8") as f:
+        f.write("=" * 80 + "\n")
+        f.write("ONNX Model Metadata\n")
+        f.write("=" * 80 + "\n\n")
+
+        f.write(f"Model Path: {onnx_net.path}\n")
+        f.write(f"Model Name: {onnx_net.name}\n\n")
+
+        f.write(f"Input Shape: {input_shape}\n")
+
+        f.write("Model Information:\n")
+        f.write(f"  Producer: {model_producer}\n")
+        f.write(f"  Producer Version: {model_version}\n")
+        f.write(f"  IR Version: {ir_version}\n")
+        f.write(f"  Opset Version: {opset_version}\n")
+        f.write(f"  Number of Nodes: {num_nodes}\n")
+        f.write(f"  Number of Initializers (Weights): {num_initializers}\n\n")
+
+        f.write("Input Information:\n")
+        for i, inp in enumerate(input_info):
+            f.write(f"  Input {i}:\n")
+            f.write(f"    Name: {inp['name']}\n")
+            f.write(f"    Shape: {inp['shape']}\n")
+            f.write(f"    Data Type: {inp['dtype']}\n")
+        f.write(f"\n  TorchModelWrapper Input Shape: {wrapper_input_shape}\n\n")
+
+        f.write("Output Information:\n")
+        for i, out in enumerate(output_info):
+            f.write(f"  Output {i}:\n")
+            f.write(f"    Name: {out['name']}\n")
+            f.write(f"    Shape: {out['shape']}\n")
+            f.write(f"    Data Type: {out['dtype']}\n")
+        f.write("\n")
+
+        f.write("Expected Input Format:\n")
+        f.write(f"  PyTorch format: (batch, channels, height, width)\n")
+        if len(input_info) > 0 and len(input_info[0]["shape"]) == 4:
+            shape = input_info[0]["shape"]
+            f.write(f"  Expected shape: {shape}\n")
+            if shape[0] == 1 or shape[0] == -1:
+                f.write(f"  Batch size: {shape[0]} (dynamic: {shape[0] == -1})\n")
+                f.write(f"  Channels: {shape[1]}\n")
+                f.write(f"  Height: {shape[2]}\n")
+                f.write(f"  Width: {shape[3]}\n")
+        f.write("\n")
+
+        f.write("=" * 80 + "\n")
+
+
 def load_model_and_dataset(args, device, image: np.ndarray):
     """
     Load a PyTorch model from a checkpoint path and wrap a single image/label
@@ -90,12 +198,30 @@ def load_model_and_dataset(args, device, image: np.ndarray):
         radius_rescale: Float radius used for the perturbation.
         classes: Integer number of output classes inferred from the model.
     """
-    model = CIFAR10_ConvLarge().to(device)
-    checkpoint = torch.load('./models/cifar10_convlarge.pth',map_location=device)
-    args.dataset = "cifar10"
-    model.load_state_dict(checkpoint)
-    model.eval()
 
+    model_path = Path(args.model)
+    # Use VERONA's ONNX to Torch conversion (new code)
+    onnx_net = ONNXNetwork.from_file(model_path)
+
+    # Log ONNX metadata if log path is specified
+    onnx_metadata_log_path = "/gpfs/work2/0/prjs1681/runs/results/SDP-crown_testing"
+    if onnx_metadata_log_path is not None:
+        log_path = Path(onnx_metadata_log_path) / "onnx_model_metadata.log"
+        log_onnx_metadata(onnx_net, log_path)
+        print(f"ONNX metadata logged to: {log_path}")
+    # Alternatively, log to log directory if available
+    elif hasattr(args, "logpath") and args.logpath:
+        log_subdir = getattr(args, "log_subdir", "default")
+        log_dir = Path(args.logpath) / log_subdir
+        log_dir.mkdir(parents=True, exist_ok=True)
+        log_path = log_dir / "onnx_model_metadata.log"
+        log_onnx_metadata(onnx_net, log_path)
+        print(f"ONNX metadata logged to: {log_path}")
+
+    torch_model_wrapper = onnx_net.load_pytorch_model() 
+    model = torch_model_wrapper.to(device)
+    model.eval()
+    
     # Process single image: ensure it's in HWC format, add batch dimension, convert to tensor, permute to CHW
     image_arr = image.copy()
     
@@ -110,12 +236,13 @@ def load_model_and_dataset(args, device, image: np.ndarray):
     if image_arr.ndim == 3:
         image_arr = image_arr[np.newaxis, ...]
 
-    image_arr = preprocess_cifar(image_arr)
+    #image_arr = preprocess_cifar(image_arr)
     # Convert to tensor and permute to (1, C, H, W)
     image_tensor = torch.from_numpy(image_arr).permute(0, 3, 1, 2)
     
-    radius_rescale = args.radius / 0.225
-    classes = 10
+    #radius_rescale = args.radius / 0.225
+    radius_rescale = args.radius
+    classes = 10 #hardcoded for now
 
     return model, image_tensor, radius_rescale, classes
 
