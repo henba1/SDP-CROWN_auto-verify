@@ -1,4 +1,3 @@
-from re import I
 import argparse
 import datetime
 import os
@@ -15,15 +14,29 @@ from utils import *
 from auto_LiRPA import BoundedModule, BoundedTensor
 from auto_LiRPA.perturbations import PerturbationLpNorm
 
+DEBUG = True
+
+if DEBUG:
+    from PIL import Image 
 
 def verified_sdp_crown(
-    image, label, model, radius, device, classes, args
+    image,
+    label,
+    model,
+    radius,
+    device,
+    classes,
+    args,
 ):
     """Run SDP-CROWN on the data instance passed by VERONA's epsilon_value_estimator for the specified epsilon."""
     total_time = 0
     timestamp = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
-    
-    log_dir = f"{args.logpath}/{timestamp}"  
+
+    # Group logs by image (tmp directory name from VERONA) when available; otherwise
+    # fall back to a timestamp-based directory.
+    log_root = Path(args.logpath)
+    log_subdir = getattr(args, "log_subdir", timestamp)
+    log_dir = log_root / log_subdir
     os.makedirs(log_dir, exist_ok=True)
 
     verifiction_result = "UNSAT"
@@ -96,13 +109,18 @@ def verified_sdp_crown(
         # For auto-verify we only need SAT/UNSAT on stdout; we deliberately do not
         # write to the results_file so that no counterexample string is parsed -
         # Keep a local log for manual inspection
+        true_label_value = (
+            int(label.item()) if isinstance(label, torch.Tensor) else int(label)
+        )
         sample_log = {
-            "true_label": label,
+            "true_label": true_label_value,
+            "radius": float(radius),
             "margins": crown_lb.cpu().tolist()[0],
             "verification_result": verifiction_result,
             "elapsed_time": elapsed_time,
+            "gpu_mem_after": gpu_mem_after['memory_percent'],
         }
-        sample_log_path = f"{log_dir}/sample_{timestamp}.log"
+        sample_log_path = log_dir / f"sample_eps_{radius:.6f}_{timestamp}.log"
         with open(sample_log_path, "w", encoding="utf-8") as f:
             for key, val in sample_log.items():
                 f.write(f"{key}: {val}\n")
@@ -195,10 +213,71 @@ if __name__ == "__main__":
                 "and be non-negative in the metadata .npz file"
             )
         label_int = image_class
-    else:
-        raise FileNotFoundError(
-            f"SDP-CROWN VNNLib parsing error: Metadata sidecar not found for property: {property_path}"
-        )
+
+        image_range = image_np.max() - image_np.min()
+
+        if DEBUG:
+            log_root = Path(args.logpath)
+            sidecar_log_subdir = property_path.parent.name
+            sidecar_log_dir = log_root / sidecar_log_subdir
+            sidecar_log_dir.mkdir(parents=True, exist_ok=True)
+
+            # Save raw image array and basic metadata.
+            sidecar_image_path = sidecar_log_dir / "sidecar_image.npy"
+            np.save(sidecar_image_path, image_np)
+
+            sidecar_meta_path = sidecar_log_dir / "sidecar_meta.txt"
+            with open(sidecar_meta_path, "w", encoding="utf-8") as f:
+                f.write(f"meta_path: {meta_path}\n")
+                f.write(f"epsilon: {epsilon}\n")
+                f.write(f"image_shape: {image_np.shape}\n")
+                f.write(f"image_dtype: {image_np.dtype}\n")
+                f.write(f"image_class: {image_class}\n")
+                f.write(f"image_range: {image_range}\n")
+                
+                f.write(f"args.radius: {args.radius}\n")
+                f.write(f"args.lr_alpha: {args.lr_alpha}\n")
+                f.write(f"args.lr_lambda: {args.lr_lambda}\n")
+                f.write(f"args.logpath: {args.logpath}\n")
+
+
+            try:
+
+                img_arr = image_np
+                # Heuristics for common JAIR image shapes.
+                if img_arr.ndim == 1:
+                    if img_arr.size == 3072:
+                        # CIFAR-10: 3x32x32
+                        img_arr = img_arr.reshape(3, 32, 32)
+                    elif img_arr.size == 784:
+                        # MNIST: 1x28x28
+                        img_arr = img_arr.reshape(28, 28)
+
+                if img_arr.ndim == 3 and img_arr.shape[0] in (1, 3):
+                    # Convert CHW -> HWC
+                    img_arr = np.transpose(img_arr, (1, 2, 0))
+
+                # Normalize to [0, 255] and convert to uint8 for image saving.
+                img_min, img_max = float(img_arr.min()), float(img_arr.max())
+                if img_max > img_min:
+                    img_norm = (img_arr - img_min) / (img_max - img_min)
+                else:
+                    img_norm = img_arr
+                img_uint8 = (np.clip(img_norm, 0.0, 1.0) * 255).astype(np.uint8)
+
+                sidecar_png_path = sidecar_log_dir / "sidecar_image.png"
+                Image.fromarray(img_uint8).save(sidecar_png_path)
+            except Exception:
+                # Debug-only; ignore any failures in image export.
+                pass
+        else:
+            raise FileNotFoundError(
+                f"SDP-CROWN VNNLib parsing error: Metadata sidecar not found for property: {property_path}"
+            )
+
+    # Derive a stable subdirectory name per image from the VERONA tmp path that
+    # contains the VNNLib/npz files.
+    args.log_subdir = property_path.parent.name
 
     # Model and preprocessing are inferred from the chosen model; we do not need a dataset
     model, image_tensor, radius_rescale, classes = load_model_and_dataset(
