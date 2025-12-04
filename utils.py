@@ -183,62 +183,40 @@ def log_onnx_metadata(onnx_net: ONNXNetwork, log_path: Path) -> None:
 
 def load_model_and_dataset(args, device, image: np.ndarray):
     """
-    Load a PyTorch model from a checkpoint path and wrap a single image/label
+    Load a PyTorch model from a checkpoint path and wrap a single image
     instance into tensors usable by SDP-CROWN.
 
     Args:
-        args: Argument namespace, with args.model (path to .pth or model id)
+        args: Argument namespace, with args.model (path to a .pth checkpoint)
               and args.radius already set.
         device: Torch device.
         image: Numpy array representing a single input instance (flattened or shaped).
-        label: Integer class label for the instance.
 
     Returns:
         model: nn.Module on the correct device, in eval mode.
-        dataset: Tensor of shape (1, ...) containing the image.
-        labels: Tensor of shape (1,) containing the label.
+        image_tensor: Tensor of shape (1, C, H, W) containing the image.
         radius_rescale: Float radius used for the perturbation.
         classes: Integer number of output classes inferred from the model.
     """
 
     model_path = Path(args.model)
-    # Use VERONA's ONNX to Torch conversion (new code)
-    onnx_net = ONNXNetwork.from_file(model_path)
-
-    # Log ONNX metadata if log path is specified
-    onnx_metadata_log_path = "/gpfs/work2/0/prjs1681/runs/results/SDP-crown_testing"
-    if onnx_metadata_log_path is not None:
-        log_path = Path(onnx_metadata_log_path) / "onnx_model_metadata.log"
-        log_onnx_metadata(onnx_net, log_path)
-        print(f"ONNX metadata logged to: {log_path}")
-    # Alternatively, log to log directory if available
-    elif hasattr(args, "logpath") and args.logpath:
-        log_subdir = getattr(args, "log_subdir", "default")
-        log_dir = Path(args.logpath) / log_subdir
-        log_dir.mkdir(parents=True, exist_ok=True)
-        log_path = log_dir / "onnx_model_metadata.log"
-        log_onnx_metadata(onnx_net, log_path)
-        print(f"ONNX metadata logged to: {log_path}")
 
     if sdp_crown_model:
+        # Original SDP-CROWN CIFAR-10 ConvLarge model and checkpoint.
         model = CIFAR10_ConvLarge().to(device)
         checkpoint = torch.load("./models/cifar10_convlarge.pth", map_location=device)
         args.dataset = "cifar10"
         model.load_state_dict(checkpoint)
     else:
-        # NOTE:
-        # -----
-        # ONNXNetwork.load_pytorch_model() returns a TorchModelWrapper, whose forward()
-        # method *reshapes* the input tensor to the ONNX input shape on every call.
-        # This is fine for standard inference, but when SDP-CROWN wraps the input as
-        # a BoundedTensor and traces the model via auto_LiRPA.BoundedModule, that
-        # extra reshape layer interacts poorly with the LiRPA symbolic graph and
-        # can produce extremely large, overly conservative (very negative) margins.
-        #
-        # For SDP-CROWN we therefore bypass the wrapper and give BoundedModule the
-        # underlying plain nn.Module that onnx2torch produced.
-        torch_model_wrapper = onnx_net.load_pytorch_model()
-        model = torch_model_wrapper.torch_model.to(device)
+        # JAIR ConvBig architecture with weights loaded from a .pth checkpoint.
+        # The checkpoint at args.model is expected to be produced from the
+        # original JAIR training code (or converted once from ONNX) and to match
+        # the CONV_BIG definition in SDP-CROWN/models.py.
+        model = CONV_BIG().to(device)
+        checkpoint = torch.load("./models/conv_big_best.pth", map_location=device)
+        model.load_state_dict(checkpoint)
+        args.dataset = "cifar10"
+
     model.eval()
 
     # Process single image: ensure it's in HWC format, add batch dimension, convert to tensor, permute to CHW

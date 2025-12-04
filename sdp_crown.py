@@ -51,6 +51,25 @@ def verified_sdp_crown(
     method = "CROWN-Optimized"
     C = build_C(label, classes)
 
+
+    # === DEBUG: exact logits and exact margins at epsilon = 0 ===
+    if DEBUG:
+        with torch.no_grad():
+            logits = model(image.to(device))  # shape: (1, K)
+            logits_min = logits.min().item()
+            logits_max = logits.max().item()
+            # Sanity: print basic stats
+            print(f"[DEBUG] logits min/max: {logits.min().item():.3e} / {logits.max().item():.3e}")
+
+            # Exact margins via the SAME C matrix that SDP-CROWN uses
+            exact_margins = torch.bmm(C, logits.unsqueeze(-1)).squeeze(-1)  # shape: (1, K-1)
+            print(f"[DEBUG] exact margins (eps=0) min/max: "
+                f"{exact_margins.min().item():.3e} / {exact_margins.max().item():.3e}")
+            print(f"[DEBUG] exact margins vector: {exact_margins[0].tolist()}")
+            exact_margins_min = exact_margins.min().item()
+            exact_margins_max = exact_margins.max().item()
+            exact_margins_vector = exact_margins[0].tolist()
+            
     # Global box constraint for image datasets whose inputs live in [0, 1] (e.g. MNIST, CIFAR-10 JAIR models).
     # This enforces that the L2-ball perturbation never leaves the valid pixel range, i.e., we verify robustness
     # over the intersection of the L2-ball and the [0, 1]^n input domain.
@@ -119,6 +138,11 @@ def verified_sdp_crown(
             "verification_result": verifiction_result,
             "elapsed_time": elapsed_time,
             "gpu_mem_after": gpu_mem_after['memory_percent'],
+            "logits_min": logits_min,
+            "logits_max": logits_max,
+            "exact_margins_min": exact_margins_min,
+            "exact_margins_max": exact_margins_max,
+            "exact_margins_vector": exact_margins_vector,
         }
         sample_log_path = log_dir / f"sample_eps_{radius:.6f}_{timestamp}.log"
         with open(sample_log_path, "w", encoding="utf-8") as f:
