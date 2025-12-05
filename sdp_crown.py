@@ -14,7 +14,7 @@ from utils import *
 from auto_LiRPA import BoundedModule, BoundedTensor
 from auto_LiRPA.perturbations import PerturbationLpNorm
 
-DEBUG = True
+DEBUG = False
 
 if DEBUG:
     from PIL import Image 
@@ -213,7 +213,11 @@ if __name__ == "__main__":
         args.input_box_upper = float(box_cfg[1])
 
     # Load epsilon and metadata from sidecar metadata of VNNLibProperty saved by Verona, if available
-    property_path = Path(args.vnnlib_property)
+    if DEBUG:
+        property_path = Path("./tmp_sdp_test/sample_0.vnnlib")
+    else:
+        property_path = Path(args.vnnlib_property)
+
     meta_path = property_path.with_suffix(".npz")
     if meta_path.exists():
         data = np.load(meta_path)

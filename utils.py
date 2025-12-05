@@ -205,43 +205,84 @@ def load_model_and_dataset(args, device, image: np.ndarray):
         # Original SDP-CROWN CIFAR-10 ConvLarge model and checkpoint.
         model = CIFAR10_ConvLarge().to(device)
         checkpoint = torch.load("./models/cifar10_convlarge.pth", map_location=device)
-        args.dataset = "cifar10"
         model.load_state_dict(checkpoint)
     else:
-        # JAIR ConvBig architecture with weights loaded from a .pth checkpoint.
-        # The checkpoint at args.model is expected to be produced from the
-        # original JAIR training code (or converted once from ONNX) and to match
-        # the CONV_BIG definition in SDP-CROWN/models.py.
-        model = CONV_BIG().to(device)
-        checkpoint = torch.load("./models/conv_big_best.pth", map_location=device)
-        model.load_state_dict(checkpoint)
-        args.dataset = "cifar10"
+        # Our models:
+        # - If args.model is an ONNX file, use VERONA's ONNX → Torch conversion,
+        #   but pass only the underlying torch_model to SDP-CROWN (no wrapper).
+        # - If args.model is a .pth file, treat it as a JAIR ConvBig checkpoint
+        #   (either full model instance or state_dict), as in the debug script.
+        if model_path.suffix == ".onnx":
+            onnx_net = ONNXNetwork.from_file(model_path)
+            torch_model_wrapper = onnx_net.load_pytorch_model()
+            model = torch_model_wrapper.torch_model.to(device)
+        elif model_path.suffix == ".pth":
+            loaded = torch.load(model_path, map_location=device, weights_only=False)
+            if isinstance(loaded, nn.Module):
+                model = loaded.to(device)
+            elif isinstance(loaded, dict):
+                model = CONV_BIG().to(device)
+                model.load_state_dict(loaded)
+            else:
+                raise ValueError(
+                    f"Unsupported checkpoint format at '{model_path}'; "
+                    f"expected nn.Module or state_dict, got {type(loaded)}."
+                )
+        else:
+            raise ValueError(
+                f"SDP-CROWN: Unsupported model format '{model_path}'; "
+                "expected .onnx or .pth for JAIR models."
+            )
 
+    args.dataset = "cifar10"
     model.eval()
 
-    # Process single image: ensure it's in HWC format, add batch dimension, convert to tensor, permute to CHW
+    # Process single image. Verona stores CIFAR-10 images in CHW format (C,H,W),
+    # while the original SDP-CROWN utilities assumed HWC. To avoid channel
+    # mismatches like [1, 32, 3, 32] (seen in conv2d error), we explicitly
+    # normalize to (1, 3, 32, 32) here.
     image_arr = image.copy()
-    
-    # Handle different input shapes
+
+    # Handle flattened images.
     if image_arr.ndim == 1:
-        # Flattened image - reshape based on size
         if image_arr.size == 3072:  # CIFAR-10: 3*32*32
-            image_arr = image_arr.reshape(32, 32, 3)
+            # Interpret as CHW: (3, 32, 32)
+            image_arr = image_arr.reshape(3, 32, 32)
         else:
             raise ValueError(f"Unexpected flattened image size: {image_arr.size}")
-    # Add batch dimension: (H, W, C) -> (1, H, W, C)
+
+    # Handle 3D images: either CHW (3,32,32) or HWC (32,32,3).
+    if image_arr.ndim == 3:
+        if image_arr.shape == (3, 32, 32):
+            # Already CHW, nothing to do.
+            pass
+        elif image_arr.shape == (32, 32, 3):
+            # HWC -> CHW
+            image_arr = np.transpose(image_arr, (2, 0, 1))
+        else:
+            raise ValueError(f"Unexpected 3D image shape: {image_arr.shape}")
+
+    # Add batch dimension: (C, H, W) -> (1, C, H, W)
     if image_arr.ndim == 3:
         image_arr = image_arr[np.newaxis, ...]
-    
+
+    # Preprocessing / radius scaling:
+    # - CIFAR10_ConvLarge was trained on normalized data: use SDP preprocessing
+    #   and rescale the L2 radius by the std as in the original code.
+    # - CONV_BIG was trained on unnormalized CIFAR-10: no preprocessing and
+    #   no radius rescaling.
     if sdp_crown_model:
-        image_arr = preprocess_cifar(image_arr)
-        radius_rescale = args.radius / 0.225       
+        # image_arr: (1, C, H, W) -> (1, H, W, C) for preprocess_cifar, then back.
+        image_arr_hwc = np.transpose(image_arr, (0, 2, 3, 1))
+        image_arr_hwc = preprocess_cifar(image_arr_hwc)
+        image_arr = np.transpose(image_arr_hwc, (0, 3, 1, 2))
+        radius_rescale = args.radius / 0.225
     else:
         radius_rescale = args.radius
 
-    # Convert to tensor and permute to (1, C, H, W)
-    image_tensor = torch.from_numpy(image_arr).permute(0, 3, 1, 2)
-    classes = 10 #hardcoded for now
+    # Convert to tensor; already in (1, C, H, W).
+    image_tensor = torch.from_numpy(image_arr).float()
+    classes = 10  # hardcoded for now
 
     return model, image_tensor, radius_rescale, classes
 
