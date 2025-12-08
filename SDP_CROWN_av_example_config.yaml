@@ -1,9 +1,17 @@
 # SDP-CROWN Configuration Example
 # This file contains the hyperparameters and settings for SDP-CROWN verification
-lr_alpha: 0.5
-lr_lambda: 0.05
-log_path: "/projects/prjs1681/runs/results/SDP-crown_testing"
-#
+
+# Optimize bound arguments for SDP-CROWN
+optimize_bound_args:
+  iteration: 300
+  lr_alpha: 0.5
+  lr_lambda: 0.05
+  early_stop_patience: 20
+  fix_interm_bounds: false
+  enable_opt_interm_bounds: true
+  enable_SDP_crown: true
+
+
 # Optional: global input box constraint for the perturbation region seen by SDP-CROWN.
 # This should only be enabled when the inputs that reach the verifier are known to live in a fixed box, e.g. [0.0, 1.0]
 # for unnormalized image datasets such as the JAIR MNIST/CIFAR-10 models. If preprocessing normalizes or otherwise
@@ -12,6 +20,6 @@ log_path: "/projects/prjs1681/runs/results/SDP-crown_testing"
 #
 # To enable, uncomment and set the two endpoints [lower_bound, upper_bound]. The default (when commented out) is to
 # disable the global box constraint and use only the L2-ball perturbation.
-input_box_constraint: [0.0, 1.0]
+#input_box_constraint: [0.0, 1.0]
 
 

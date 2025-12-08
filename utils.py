@@ -6,7 +6,6 @@ import gc
 from pathlib import Path
 from models import *
 from fractions import Fraction
-from ada_verona import ONNXNetwork
 
 def parse_float_or_fraction(x: str) -> float:
     try:
@@ -52,135 +51,89 @@ def build_C(label, classes):
     C[torch.arange(batch_size).unsqueeze(1), row_idx, neg_cls] = -1.0
     
     return C
-    
+
+#we do not support this at the moment
+# def preprocess_cifar(image, inception_preprocess=False, perturbation=False):
+#     """
+#     Preprocess images and perturbations.Preprocessing used by the SDP paper.
+#     """
+#     MEANS = np.array([125.3, 123.0, 113.9], dtype=np.float32)/255
+#     STD = np.array([0.225, 0.225, 0.225], dtype=np.float32)
+#     if inception_preprocess:
+#         # Use 2x - 1 to get [-1, 1]-scaled images
+#         rescaled_devs = 0.5
+#         rescaled_means = 0.5
+#     else:
+#         rescaled_means = MEANS
+#         rescaled_devs = STD
+#     if perturbation:
+#         return image / rescaled_devs
+#     else:
+#         return (image - rescaled_means) / rescaled_devs
+
 def load_model_and_dataset(args, device, image: np.ndarray):
     """
-    Load a PyTorch model from a checkpoint path and wrap a single image/label
+    Load a PyTorch model from a checkpoint path and wrap a single image
     instance into tensors usable by SDP-CROWN.
 
     Args:
-        args: Argument namespace, with args.model (path to .pth or model id)
+        args: Argument namespace, with args.model (path to a .pth checkpoint)
               and args.radius already set.
         device: Torch device.
         image: Numpy array representing a single input instance (flattened or shaped).
-        label: Integer class label for the instance.
 
     Returns:
         model: nn.Module on the correct device, in eval mode.
-        dataset: Tensor of shape (1, ...) containing the image.
-        labels: Tensor of shape (1,) containing the label.
+        image_tensor: Tensor of shape (1, C, H, W) containing the image.
         radius_rescale: Float radius used for the perturbation.
         classes: Integer number of output classes inferred from the model.
     """
-    model_arg = args.model
-    model_path = Path(model_arg)
 
-    if model_path.suffix == ".onnx":
-        # Use VERONA's ONNX to Torch conversion
-        onnx_net = ONNXNetwork.from_file(model_path)
-        torch_model_wrapper = onnx_net.load_pytorch_model() 
-        model = torch_model_wrapper.to(device)
-
-    elif model_path.suffix == ".pth":
-        # Generic PyTorch checkpoint path. We assume it stores an nn.Module
-        # or a state_dict compatible with one of the architectures in models.py.
-        checkpoint = torch.load(model_path, map_location=device)
-        if isinstance(checkpoint, nn.Module):
-            model = checkpoint.to(device)
-        elif isinstance(checkpoint, dict):
-            # User must pass in a compatible architecture via model id.
-            name = model_path.stem.lower()
-            if "mnist" in name and "mlp" in name:
-                model = MNIST_MLP().to(device)
-            elif "mnist" in name and "convsmall" in name:
-                model = MNIST_ConvSmall().to(device)
-            elif "mnist" in name and "convlarge" in name:
-                model = MNIST_ConvLarge().to(device)
-            # JAIR MNIST architectures
-            elif "mnist" in name and "relu_4_1024" in name:
-                model = MNIST_RELU_4_1024().to(device)
-            elif "mnist" in name and "nn" in name:
-                model = MNIST_NN().to(device)
-            # CIFAR-10 architectures from the original SDP-CROWN examples.
-            elif "cifar10" in name and "cnn_a" in name:
-                model = CIFAR10_CNN_A().to(device)
-            elif "cifar10" in name and "cnn_b" in name:
-                model = CIFAR10_CNN_B().to(device)
-            elif "cifar10" in name and "cnn_c" in name:
-                model = CIFAR10_CNN_C().to(device)
-            elif "cifar10" in name and "convsmall" in name:
-                model = CIFAR10_ConvSmall().to(device)
-            elif "cifar10" in name and "convdeep" in name:
-                model = CIFAR10_ConvDeep().to(device)
-            elif "cifar10" in name and "convlarge" in name:
-                model = CIFAR10_ConvLarge().to(device)
-            # JAIR CIFAR-10 architectures (ConvBig, 7x1024 MLP, ResNet-4B).
-            elif "conv_big" in name:
-                model = CONV_BIG().to(device)
-            elif "cifar_7_1024" in name:
-                model = CIFAR_7_1024().to(device)
-            elif "resnet_4b" in name:
-                # JAIR training scripts typically call ResNet4B(False)
-                model = ResNet4B(bn=False).to(device)
-            else:
-                raise ValueError(
-                    f"SDP-CROWN: Could not infer architecture from checkpoint name '{model_path.name}'. "
-                    "Please use one of the known SDP-CROWN architectures or adapt the loader."
-                )
-            model.load_state_dict(checkpoint)
-        else:
-            raise ValueError(f"Unsupported checkpoint format at '{model_path}'.")
-    else:
-        # Fallback to legacy string identifiers (mnist_mlp, cifar10_cnn_a, conv_big, cifar_7_1024, resnet_4b, ...)
-        name = str(model_arg).lower()
-        if name == "mnist_mlp":
-            model = MNIST_MLP().to(device)
-        elif name == "mnist_convsmall":
-            model = MNIST_ConvSmall().to(device)
-        elif name == "mnist_convlarge":
-            model = MNIST_ConvLarge().to(device)
-        elif name == "mnist_nn":
-            model = MNIST_NN().to(device)
-        elif name == "mnist_relu_4_1024":
-            model = MNIST_RELU_4_1024().to(device)
-        elif name == "cifar10_cnn_a":
-            model = CIFAR10_CNN_A().to(device)
-        elif name == "cifar10_cnn_b":
-            model = CIFAR10_CNN_B().to(device)
-        elif name == "cifar10_cnn_c":
-            model = CIFAR10_CNN_C().to(device)
-        elif name == "cifar10_convsmall":
-            model = CIFAR10_ConvSmall().to(device)
-        elif name == "cifar10_convdeep":
-            model = CIFAR10_ConvDeep().to(device)
-        elif name == "cifar10_convlarge":
-            model = CIFAR10_ConvLarge().to(device)
-        # JAIR architectures by string id.
-        elif name == "conv_big":
-            model = CONV_BIG().to(device)
-        elif name == "cifar_7_1024":
-            model = CIFAR_7_1024().to(device)
-        elif name == "resnet_4b":
-            model = ResNet4B(bn=False).to(device)
-        else:
-            raise ValueError(f"Unexpected model identifier: {args.model}")
-
+    model_path = Path(args.model)
+  
+    loaded = torch.load(model_path, map_location=device, weights_only=False)
+    model = loaded.to(device)
     model.eval()
 
-    # Wrap single image and label into tensors.
-    x = torch.from_numpy(image).float().to(device)
-    if x.dim() == 1:
-        x = x.unsqueeze(0)
-    image = x  # shape: (1, ...)
+    # Process single image. Verona stores CIFAR-10 images in CHW format (C,H,W),
+    # while the original SDP-CROWN utilities assumed HWC. To avoid channel
+    # mismatches like [1, 32, 3, 32] (seen in conv2d error), we explicitly
+    # normalize to (1, 3, 32, 32) here.
+    image_arr = image.copy()
 
+    # Handle flattened images.
+    if image_arr.ndim == 1:
+        if image_arr.size == 3072:  # CIFAR-10: 3*32*32
+            # Interpret as CHW: (3, 32, 32)
+            image_arr = image_arr.reshape(3, 32, 32)
+        else:
+            raise ValueError(f"Unexpected flattened image size: {image_arr.size}")
 
-    # Infer number of classes from a forward pass.
+    # Handle 3D images: either CHW (3,32,32) or HWC (32,32,3).
+    if image_arr.ndim == 3:
+        if image_arr.shape == (3, 32, 32):
+            # Already CHW, nothing to do.
+            pass
+        elif image_arr.shape == (32, 32, 3):
+            # HWC -> CHW
+            image_arr = np.transpose(image_arr, (2, 0, 1))
+        else:
+            raise ValueError(f"Unexpected 3D image shape: {image_arr.shape}")
+
+    # Add batch dimension: (C, H, W) -> (1, C, H, W)
+    if image_arr.ndim == 3:
+        image_arr = image_arr[np.newaxis, ...]
+
+    radius_rescale = args.radius
+
+    # Convert to tensor; already in (1, C, H, W).
+    image_tensor = torch.from_numpy(image_arr).float().to(device)
+    
     with torch.no_grad():
-        logits = model(image)
+        logits = model(image_tensor)
     classes = int(logits.shape[-1])
 
-    radius_rescale = float(getattr(args, "radius", 0.0))
-    return model, image, radius_rescale, classes
+    return model, image_tensor, radius_rescale, classes
 
 
 #GPU memory management utility functions
