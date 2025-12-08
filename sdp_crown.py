@@ -214,7 +214,7 @@ if __name__ == "__main__":
 
     # Load epsilon and metadata from sidecar metadata of VNNLibProperty saved by Verona, if available
     if DEBUG:
-        property_path = Path("./tmp_sdp_test/sample_0.vnnlib")
+        property_path = Path("/home/jvrijn/code/rs/verif/SDP-CROWN/tmp_sdp_test/sample_0.vnnlib")
     else:
         property_path = Path(args.vnnlib_property)
 
@@ -297,10 +297,10 @@ if __name__ == "__main__":
             except Exception:
                 # Debug-only; ignore any failures in image export.
                 pass
-        else:
-            raise FileNotFoundError(
-                f"SDP-CROWN VNNLib parsing error: Metadata sidecar not found for property: {property_path}"
-            )
+    else:
+        raise FileNotFoundError(
+            f"SDP-CROWN VNNLib parsing error: Metadata sidecar not found for property: {property_path}"
+        )
 
     # Derive a stable subdirectory name per image from the VERONA tmp path that
     # contains the VNNLib/npz files.
