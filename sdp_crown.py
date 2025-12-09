@@ -14,10 +14,6 @@ from utils import *
 from auto_LiRPA import BoundedModule, BoundedTensor
 from auto_LiRPA.perturbations import PerturbationLpNorm
 
-DEBUG = False
-
-if DEBUG:
-    from PIL import Image 
 
 def verified_sdp_crown(
     image,

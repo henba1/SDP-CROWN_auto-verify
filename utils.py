@@ -52,7 +52,7 @@ def build_C(label, classes):
     
     return C
 
-#we do not support this at the moment
+#we do not support dataset specific preprocessing for now
 # def preprocess_cifar(image, inception_preprocess=False, perturbation=False):
 #     """
 #     Preprocess images and perturbations.Preprocessing used by the SDP paper.
@@ -97,8 +97,7 @@ def load_model_and_dataset(args, device, image: np.ndarray):
 
     # Process single image. Verona stores CIFAR-10 images in CHW format (C,H,W),
     # while the original SDP-CROWN utilities assumed HWC. To avoid channel
-    # mismatches like [1, 32, 3, 32] (seen in conv2d error), we explicitly
-    # normalize to (1, 3, 32, 32) here.
+    # mismatches  we explicitly normalize to (1, 3, 32, 32) here.
     image_arr = image.copy()
 
     # Handle flattened images.
@@ -136,7 +135,6 @@ def load_model_and_dataset(args, device, image: np.ndarray):
     return model, image_tensor, radius_rescale, classes
 
 
-#GPU memory management utility functions
 def get_gpu_memory_info(device):
     """
     Get current GPU memory usage in GB and percentage.
@@ -151,11 +149,11 @@ def get_gpu_memory_info(device):
         torch.cuda.synchronize()
         memory_allocated = (
             torch.cuda.memory_allocated(device) / 1024**3
-        )  # Convert to GB
-        memory_reserved = torch.cuda.memory_reserved(device) / 1024**3  # Convert to GB
+        )
+        memory_reserved = torch.cuda.memory_reserved(device) / 1024**3
         total_memory = (
             torch.cuda.get_device_properties(device).total_memory / 1024**3
-        )  # Convert to GB
+        )
         memory_percent = (memory_allocated / total_memory) * 100
         return {
             "memory_allocated_gb": memory_allocated,
