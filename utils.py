@@ -53,54 +53,6 @@ def build_C(label, classes):
     
     return C
 
-def preprocess_cifar(image: np.ndarray, inception_preprocess: bool = False, perturbation: bool = False) -> np.ndarray:
-    """
-    Preprocess images and perturbations. Preprocessing used by the SDP paper.
-
-    This version supports both channel-last (HWC / NHWC) and channel-first (CHW / NCHW)
-    layouts, which allows us to use it directly on the CHW images used in this verifier.
-    """
-    image = image.astype(np.float32, copy=False)
-
-    means = np.array([125.3, 123.0, 113.9], dtype=np.float32) / 255.0
-    std = np.array([0.225, 0.225, 0.225], dtype=np.float32)
-
-    if inception_preprocess:
-        # Use 2x - 1 to get [-1, 1]-scaled images
-        rescaled_devs = 0.5
-        rescaled_means = 0.5
-    else:
-        if image.ndim == 3:
-            # Single image: HWC or CHW
-            if image.shape[-1] == 3:
-                # HWC
-                rescaled_means = means
-                rescaled_devs = std
-            elif image.shape[0] == 3:
-                # CHW
-                rescaled_means = means[:, None, None]
-                rescaled_devs = std[:, None, None]
-            else:
-                raise ValueError(f"Unexpected 3D image shape for preprocessing: {image.shape}")
-        elif image.ndim == 4:
-            # Batched images: NHWC or NCHW
-            if image.shape[-1] == 3:
-                # NHWC
-                rescaled_means = means
-                rescaled_devs = std
-            elif image.shape[1] == 3:
-                # NCHW
-                rescaled_means = means[None, :, None, None]
-                rescaled_devs = std[None, :, None, None]
-            else:
-                raise ValueError(f"Unexpected 4D image shape for preprocessing: {image.shape}")
-        else:
-            raise ValueError(f"preprocess_cifar expects a 3D or 4D array, got ndim={image.ndim}")
-
-    if perturbation:
-        return image / rescaled_devs
-    return (image - rescaled_means) / rescaled_devs
-
 def infer_model_architecture(model_name: str) -> nn.Module:
     """
     Infer PyTorch model architecture from model filename.
@@ -201,10 +153,10 @@ def load_model_and_dataset(args, device, image: np.ndarray):
     # normalize to (1, 3, 32, 32) here.
     image_arr = image.copy()
 
-    # Handle flattened images.
     if image_arr.ndim == 1:
         if image_arr.size == 3072:  # CIFAR-10: 3*32*32
             # Interpret as CHW: (3, 32, 32)
+            # Image is already preprocessed, so we just reshape
             image_arr = image_arr.reshape(3, 32, 32)
         else:
             raise ValueError(f"Unexpected flattened image size: {image_arr.size}")
@@ -221,14 +173,13 @@ def load_model_and_dataset(args, device, image: np.ndarray):
             raise ValueError(f"Unexpected 3D image shape: {image_arr.shape}")
 
     # At this point, image_arr is in CHW format (3, 32, 32).
-    # Normalize it using the same preprocessing as during training
-    # (non-inception CIFAR preprocessing).
-    image_arr = preprocess_cifar(image_arr, inception_preprocess=False, perturbation=False)
+    # Normalization is already done in VERONA before flattening, so we skip preprocessing here.
 
     # Add batch dimension: (C, H, W) -> (1, C, H, W)
     if image_arr.ndim == 3:
         image_arr = image_arr[np.newaxis, ...]
 
+    #because of the normalization in VERONA, we need to rescale radius by dataset std
     radius_rescale = args.radius/0.225
 
     # Convert to tensor; already in (1, C, H, W).
