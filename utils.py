@@ -2,6 +2,7 @@ import torch
 import torch.nn as nn
 import numpy as np
 import gc
+from collections import OrderedDict
 
 from pathlib import Path
 from models import *
@@ -100,6 +101,60 @@ def preprocess_cifar(image: np.ndarray, inception_preprocess: bool = False, pert
         return image / rescaled_devs
     return (image - rescaled_means) / rescaled_devs
 
+def infer_model_architecture(model_name: str) -> nn.Module:
+    """
+    Infer PyTorch model architecture from model filename.
+    
+    Args:
+        model_name: Model filename (without extension)
+        
+    Returns:
+        Instantiated model architecture
+    """
+    name = model_name.lower()
+    
+    # MNIST models
+    if "mnist" in name:
+        if "mlp" in name:
+            return MNIST_MLP()
+        elif "convsmall" in name:
+            return MNIST_ConvSmall()
+        else:
+            return MNIST_ConvLarge()
+    
+    # CIFAR-10 models
+    elif "cifar" in name or "cifar10" in name:
+        if "cnn_a" in name:
+            return CIFAR10_CNN_A()
+        elif "cnn_b" in name:
+            return CIFAR10_CNN_B()
+        elif "cnn_c" in name:
+            return CIFAR10_CNN_C()
+        elif "convsmall" in name:
+            return CIFAR10_ConvSmall()
+        elif "convdeep" in name:
+            return CIFAR10_ConvDeep()
+        elif "convlarge" in name or "conv_large" in name:
+            return CIFAR10_ConvLarge()
+        else:
+            # Default to ConvLarge for CIFAR-10
+            return CIFAR10_ConvLarge()
+    
+    # JAIR CIFAR-10 architectures
+    elif "conv_big" in name:
+        return CONV_BIG()
+    elif "cifar_7_1024" in name:
+        return CIFAR_7_1024()
+    elif "resnet_4b" in name or "resnet4b" in name:
+        return ResNet4B(bn=False)
+    
+    else:
+        raise ValueError(
+            f"Could not infer architecture from model name '{model_name}'. "
+            "Please use one of the known SDP-CROWN architectures."
+        )
+
+
 def load_model_and_dataset(args, device, image: np.ndarray):
     """
     Load a PyTorch model from a checkpoint path and wrap a single image
@@ -121,8 +176,24 @@ def load_model_and_dataset(args, device, image: np.ndarray):
     model_path = Path(args.model)
   
     loaded = torch.load(model_path, map_location=device, weights_only=False)
-    model = loaded.to(device)
-    model.eval()
+    
+    # Check if loaded object is a state_dict (OrderedDict or dict)
+    if isinstance(loaded, (OrderedDict, dict)) and not isinstance(loaded, nn.Module):
+        # It's a state_dict, need to instantiate the model architecture first
+        print(f"[SDP-CROWN] Detected state_dict in {model_path.name}, inferring architecture from filename")
+        model = infer_model_architecture(model_path.stem)
+        model.load_state_dict(loaded)
+        model = model.to(device)
+        model.eval()
+    elif isinstance(loaded, nn.Module):
+        # It's a full model object
+        model = loaded.to(device)
+        model.eval()
+    else:
+        raise ValueError(
+            f"Unsupported checkpoint format in {model_path}. "
+            "Expected either a state_dict (OrderedDict/dict) or a full model (nn.Module)."
+        )
 
     # Process single image. Verona stores CIFAR-10 images in CHW format (C,H,W),
     # while the original SDP-CROWN utilities assumed HWC. To avoid channel
