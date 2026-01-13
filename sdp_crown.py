@@ -207,35 +207,49 @@ if __name__ == "__main__":
     property_path = Path(args.vnnlib_property)
     args.property_path = property_path
     
-    meta_path = property_path.with_suffix(".npz")
-    if meta_path.exists():
-        data = np.load(meta_path)
-        epsilon = float(data.get("epsilon", -1.0))
+    text = property_path.read_text(encoding="utf-8")
+    epsilon = None
+    image_class = None
+    image_csv = None
 
-        image_np = data["image"]
+    for raw_line in text.splitlines():
+        line = raw_line.strip()
+        if not line.startswith(";"):
+            continue
+        if line.startswith("; verona_epsilon:"):
+            epsilon = float(line.split(":", 1)[1].strip())
+        elif line.startswith("; verona_image_class:"):
+            image_class = int(line.split(":", 1)[1].strip())
+        elif line.startswith("; verona_image:"):
+            image_csv = line.split(":", 1)[1].strip()
 
-        try:
-            image_class = int(data.get("image_class", -1))
-        except Exception as e:
-            raise KeyError("SDP-CROWN VNNLib parsing error: Failed to load 'image_class' from npz file") from e
-
-        if epsilon < 0.0:
-            raise ValueError("SDP-CROWN VNNLib parsing error: Epsilon / radius must be non-negative")
-
-        args.radius = epsilon
-
-        if image_class == -1:
-            raise ValueError(
-                "SDP-CROWN VNNLib parsing error: image_class must be provided for SDP-CROWN "
-                "and be non-negative in the metadata .npz file"
-            )
-        label_int = image_class
-        image_range = image_np.max() - image_np.min()
-
-    else:
-        raise FileNotFoundError(
-            f"SDP-CROWN VNNLib parsing error: Metadata sidecar not found for property: {property_path}"
+    if epsilon is None:
+        raise KeyError("SDP-CROWN VNNLib parsing error: Missing '; verona_epsilon: ...' in vnnlib property header")
+    if image_class is None:
+        raise KeyError(
+            "SDP-CROWN VNNLib parsing error: Missing '; verona_image_class: ...' in vnnlib property header"
         )
+    if image_csv is None:
+        raise KeyError("SDP-CROWN VNNLib parsing error: Missing '; verona_image: ...' in vnnlib property header")
+
+    image_np = np.fromstring(image_csv, sep=",", dtype=np.float32)
+    if image_np.size == 0:
+        raise ValueError(
+            "SDP-CROWN VNNLib parsing error: Failed to parse '; verona_image: ...' as a CSV float list"
+        )
+
+    if epsilon < 0.0:
+        raise ValueError("SDP-CROWN VNNLib parsing error: Epsilon / radius must be non-negative")
+
+    args.radius = epsilon
+
+    if image_class < 0:
+        raise ValueError(
+            "SDP-CROWN VNNLib parsing error: image_class must be provided for SDP-CROWN and be non-negative"
+        )
+
+    label_int = image_class
+    image_range = image_np.max() - image_np.min()
 
     model, image_tensor, radius_rescale, classes = load_model_and_dataset(
         args, device, image=image_np
